@@ -36,6 +36,7 @@
 #include <mono/metadata/object-internals.h>
 #include <mono/metadata/security-core-clr.h>
 #include <mono/metadata/verify-internals.h>
+#include <openssl/aes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #ifdef HAVE_UNISTD_H
@@ -1073,27 +1074,66 @@ register_image (MonoImage *image)
 	return image;
 }
 
+static void
+set_decrypt_key (unsigned char* key)
+{
+	key[0] = 0x00;
+	key[1] = 0x00;
+	key[2] = 0x00;
+	key[3] = 0x00;
+	key[4] = 0x00;
+	key[5] = 0x00;
+	key[6] = 0x00;
+	key[7] = 0x00;
+	key[8] = 0x00;
+	key[9] = 0x00;
+	key[10] = 0x00;
+	key[11] = 0x00;
+	key[12] = 0x00;
+	key[13] = 0x00;
+	key[14] = 0x00;
+	key[15] = 0x00;
+}
+
 MonoImage *
 mono_image_open_from_data_with_name (char *data, guint32 data_len, gboolean need_copy, MonoImageOpenStatus *status, gboolean refonly, const char *name)
 {
 	MonoCLIImageInfo *iinfo;
 	MonoImage *image;
 	char *datac;
+	unsigned char key[16];
+	AES_KEY ctx;
+	int num;
 
 	if (!data || !data_len) {
 		if (status)
 			*status = MONO_IMAGE_IMAGE_INVALID;
 		return NULL;
 	}
-	datac = data;
-	if (need_copy) {
+
+	if (strstr(name, "Assembly-CSharp.dll") != NULL) {
+		data_len -= 16;
 		datac = g_try_malloc (data_len);
 		if (!datac) {
 			if (status)
 				*status = MONO_IMAGE_ERROR_ERRNO;
 			return NULL;
 		}
-		memcpy (datac, data, data_len);
+		set_decrypt_key (key);
+		AES_set_encrypt_key (key, 128, &ctx);
+		num = 0;
+		AES_cfb128_encrypt ((unsigned char*)data + 16, (unsigned char*)datac, data_len, &ctx, (unsigned char*)data, &num, AES_DECRYPT);
+	} else {
+		datac = data;
+		if (need_copy) {
+			datac = g_try_malloc (data_len);
+			if (!datac) {
+				if (status)
+					*status = MONO_IMAGE_ERROR_ERRNO;
+				return NULL;
+			}
+			memcpy (datac, data, data_len);
+		}
 	}
 
 	image = g_new0 (MonoImage, 1);
